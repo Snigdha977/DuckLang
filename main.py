@@ -1,13 +1,12 @@
-from dotenv import load_dotenv
-import os
+
+from lib.syntax import syntax
 
 
-load_dotenv()
-name = os.getenv("NAME", "UNKNOWN")  
+
 
 def greet(name):
     print(f"Hello, {name}!")
 
 
 if __name__ == "__main__":
-    greet(name)
+    greet(syntax.get("name", "No Name Defined"))
