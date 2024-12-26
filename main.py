@@ -3,7 +3,7 @@ import os
 
 
 load_dotenv()
-name = os.getenv("NAME", "False")  
+name = os.getenv("NAME", "UNKNOWN")  
 
 def greet(name):
     print(f"Hello, {name}!")
