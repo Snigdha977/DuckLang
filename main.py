@@ -8,6 +8,8 @@ from src.lexer import lexer
 # Test code
 source_code = '''
 quack("Hello World")
+my_list = [hello, "hello" , 87]
+my_dict = {"key": "value", "age": 25}
 duck my_int = 42
 duck my_float = 3.14
 duck my_bool = True
