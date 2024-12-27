@@ -1,6 +1,5 @@
 #!/bin/bash
 
-
 detect_os() {
     case "$(uname -s)" in
         Linux*)     echo "Linux";;

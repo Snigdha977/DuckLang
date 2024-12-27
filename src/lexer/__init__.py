@@ -5,6 +5,7 @@ from lib.syntax import syntax
 # Importing token types dictionary
 from src.lexer.token_types import TOKEN_TYPES
 
+
 # Retrieve the print command syntax from the syntax dictionary
 print_command = syntax.get("PRINT_COMMAND", "No Name Defined")
 # Retrieve the variable declaration command syntax from the syntax dictionary

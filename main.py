@@ -5,7 +5,6 @@ from src.lexer import lexer
 
 
 
-# Test code
 source_code = '''
 quack("Hello World")
 duck my_int = 42
