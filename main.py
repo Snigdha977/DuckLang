@@ -5,7 +5,6 @@ from src.lexer import lexer
 
 
 
-# Test code
 source_code = '''
 quack("Hello World")
 my_list = [hello, "hello" , 87]

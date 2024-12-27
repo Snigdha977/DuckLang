@@ -46,14 +46,30 @@
 
  - Please Check The [CONTRIBUTING.md](./CONTRIBUTING.md) and Always Push In ```dev``` Branch :)
 
+
+<img src="https://www.animatedimages.org/data/media/562/animated-line-image-0184.gif" width="1920" />
+
+## 🛠️ Prerequisites
+
+
+- [Python](https://nodejs.org/) installed on your machine 🐍
+- [Git](https://git-scm.com/) installed on your machine 🐙
+
+
 <img src="https://www.animatedimages.org/data/media/562/animated-line-image-0184.gif" width="1920" />
 
 ## ⚙️ Installation
 
-### Change Permission 🚀
+### Change Permission 🛃
 
 ```bash
    chmod +x setup.sh
+```
+
+### Set Up The Project 🟰
+
+```bash
+   ./setup.sh
 ```
 
 ### Start The Project 🚀
@@ -67,13 +83,7 @@
 
 <img src="https://www.animatedimages.org/data/media/562/animated-line-image-0184.gif" width="1920" />
 
-## 🛠️ Prerequisites
 
-- [Python](https://nodejs.org/) installed on your machine 🐍
-- [Git](https://git-scm.com/) installed on your machine 🐙
-
-
-<img src="https://www.animatedimages.org/data/media/562/animated-line-image-0184.gif" width="1920" />
 
 ## 🛠️ Tech Stack
 __DuckLang Use a variety of technologies :__
