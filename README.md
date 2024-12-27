@@ -51,6 +51,7 @@
 
 ## 🛠️ Prerequisites
 
+
 - [Python](https://nodejs.org/) installed on your machine 🐍
 - [Git](https://git-scm.com/) installed on your machine 🐙
 

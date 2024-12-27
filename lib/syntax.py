@@ -8,6 +8,7 @@ print_command = os.getenv("PRINT_COMMAND", "UNKNOWN")
 var_command = os.getenv("VARIABLE_DECLARE", "UNKNOWN")
 
 
+
 syntax = {
     "name": name,
     "PRINT_COMMAND": print_command,
