@@ -50,10 +50,16 @@
 
 ## ⚙️ Installation
 
-### Change Permission 🚀
+### Change Permission 🛃
 
 ```bash
    chmod +x setup.sh
+```
+
+### Set Up The Project 🟰
+
+```bash
+   ./setup.sh
 ```
 
 ### Start The Project 🚀
