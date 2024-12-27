@@ -10,6 +10,7 @@ source_code = '''
 quack("Hello World")
 duck my_int = 42
 duck my_float = 3.14
+quck(my_int+my_float)
 duck my_bool = True
 '''
 
