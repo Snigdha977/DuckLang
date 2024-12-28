@@ -93,6 +93,167 @@ def lexer(source_code):
             position += len(match.group(0))  # Move position to the end of the matched print statement
             continue
 
+        
+        # Match list start (e.g., [ )
+        match = re.match(r'\[', source_code[position:])
+        if match:
+            list_start_token = {
+                'type': TOKEN_TYPES["LIST_START"],
+                'value': '[',
+                'position': position,
+                'raw': '['
+            }
+            tokens.append(list_start_token)
+            position += len(match.group(0))
+
+            # Now, match the list values (numbers, strings, etc.) inside the list
+            list_values = []
+            inside_list = True
+            while inside_list:
+                match = re.match(r'\s*([^\[\],]+)\s*(,|\])', source_code[position:])
+                if match:
+                    value_str = match.group(1).strip()
+                    literal_type, literal_value = identify_literal_type(value_str)
+
+                    value_token = {
+                        'type': literal_type,
+                        'value': literal_value,
+                        'position': position,
+                        'raw': value_str
+                    }
+                    list_values.append(value_token)
+
+                    tokens.append(value_token)  # Add the token for the list value
+
+                    position += len(match.group(0))  # Move the position forward
+
+                    # Handle comma (if exists)
+                    if match.group(2) == ',':
+                        comma_token = {
+                            'type': TOKEN_TYPES["COMMA"],
+                            'value': ',',
+                            'position': position,
+                            'raw': ','
+                        }
+                        tokens.append(comma_token)
+                        continue
+
+                    # If we encounter the closing bracket
+                    if match.group(2) == ']':
+                        inside_list = False
+                    continue
+                break
+
+            # Store the end of list token (])
+            list_end_token = {
+                'type': TOKEN_TYPES["LIST_END"],
+                'value': ']',
+                'position': position,
+                'raw': ']'
+            }
+            tokens.append(list_end_token)
+            position += len(match.group(0))  # Move position after list
+
+            continue
+        # Match dictionary start (e.g., { )
+        match = re.match(r'\{', source_code[position:])
+        if match:
+            dict_start_token = {
+                'type': TOKEN_TYPES["DICT_START"],
+                'value': '{',
+                'position': position,
+                'raw': '{'
+            }
+            tokens.append(dict_start_token)
+            position += len(match.group(0))
+
+            # Check for dictionary name (optional, like in Python) - e.g., dict_name = {'key': 'value'}
+            match = re.match(r'\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*\{', source_code[position:])
+            if match:
+                dict_name_token = {
+                    'type': TOKEN_TYPES["IDENTIFIER"],
+                    'value': match.group(1),
+                    'position': position,
+                    'raw': match.group(1)
+                }
+                tokens.append(dict_name_token)
+                position += len(match.group(0))  # Move position after dictionary name assignment
+
+            # Now, match the dictionary key-value pairs
+            dict_values = []
+            inside_dict = True
+            while inside_dict:
+                match = re.match(r'\s*([^\{\}:]+)\s*:\s*([^\{\},]+)\s*(,|\})', source_code[position:])
+                if match:
+                    key_str = match.group(1).strip()
+                    value_str = match.group(2).strip()
+
+                    # Identify the literal type for the key and value
+                    key_type, key_value = identify_literal_type(key_str)
+                    value_type, value_value = identify_literal_type(value_str)
+
+                    # Create the key token
+                    key_token = {
+                        'type': key_type,
+                        'value': key_value,
+                        'position': position + len(match.group(1)),  # Position after the key
+                        'raw': key_str
+                    }
+
+                    # Create the colon token
+                    colon_token = {
+                        'type': TOKEN_TYPES["COLON"],
+                        'value': ':',
+                        'position': position + len(match.group(1)),  # Position immediately after the key
+                        'raw': ':'
+                    }
+
+                    # Create the value token
+                    value_token = {
+                        'type': value_type,
+                        'value': value_value,
+                        'position': position + len(match.group(1)) + 1,  # Position right after the colon
+                        'raw': value_str
+                    }
+
+                    # Add the key, colon, and value tokens to the dictionary
+                    tokens.append(key_token)
+                    tokens.append(colon_token)
+                    tokens.append(value_token)
+
+                    # Add the key-value pair to the dictionary
+                    dict_values.append((key_token, value_token))
+
+                    position += len(match.group(0))  # Move position forward
+
+                    # Handle comma or closing brace
+                    if match.group(3) == ',':
+                        comma_token = {
+                            'type': TOKEN_TYPES["COMMA"],
+                            'value': ',',
+                            'position': position,
+                            'raw': ','
+                        }
+                        tokens.append(comma_token)
+                    elif match.group(3) == '}':
+                        inside_dict = False
+                    continue
+                break
+
+            # Store the end of dictionary token (})
+            dict_end_token = {
+                'type': TOKEN_TYPES["DICT_END"],
+                'value': '}',
+                'position': position,
+                'raw': '}'
+            }
+            tokens.append(dict_end_token)
+            position += len(match.group(0))  # Move position after dictionary
+
+            continue
+
+
+
         # Match variable declarations (e.g., let x = 5)
         match = re.match(
             rf'\b{re.escape(var_declare_command)}\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([^;\n]+)',
@@ -107,6 +268,8 @@ def lexer(source_code):
                 'raw': var_declare_command
             }
             tokens.append(var_decl_token)
+
+        
 
             # Create a token for the variable name (identifier)
             identifier_token = {
