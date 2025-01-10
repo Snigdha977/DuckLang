@@ -199,9 +199,13 @@ class ComplexLexer:
                     )
                 )
             ''', re.VERBOSE),
+            # 'print_command': re.compile(
+            #     rf'\b{re.escape(self.print_command)}\s*\(((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*)\)'
+            # ),
+
             'print_command': re.compile(
-                rf'\b{re.escape(self.print_command)}\s*\(((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*)\)'
-            ),
+            rf'{re.escape(self.print_command)}\s*\(' # Just match 'quack('
+        ),
             # 'var_declare': re.compile(
             #     rf'\b{re.escape(self.var_declare_command)}\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*((?:[^;\n]+|\[(?:[^\[\]]+|\[[^\[\]]*\])*\])*)'
             # ),
@@ -314,41 +318,58 @@ class ComplexLexer:
             state.advance()
     
     def _handle_print_command(self, state: LexerState, start_pos: Position) -> None:
-        match = self.patterns['print_command'].match(state.source[state.position.index:])
-        if match:
-            # Add print command token
-            self._add_token(
-                state,
-                TokenType.PRINT_COMMAND,
-                self.print_command,
-                start_pos,
-                match.group(0)
-            )
+        # First, handle the quack keyword itself
+        command_str = self.print_command
+        self._add_token(
+            state,
+            TokenType.PRINT_COMMAND,
+            command_str,
+            start_pos,
+            command_str
+        )
+        
+        # Advance past 'quack'
+        for _ in range(len(command_str)):
+            state.advance()
             
-            # Handle the content inside print
-            content = match.group(1).strip()
-            content_pos = Position(
-                start_pos.line,
-                start_pos.column + len(self.print_command) + 1,
-                start_pos.index + len(self.print_command) + 1,
-                start_pos.file
-            )
+        # Skip any whitespace
+        while state.current_char and state.current_char.isspace():
+            state.advance()
             
-            # Add the content token
-            if content.startswith('"') or content.startswith("'"):
-                self._add_token(
-                    state,
-                    TokenType.STRING,
-                    content[1:-1],
-                    content_pos,
-                    content
-                )
-            else:
-                self._handle_identifier(state, content_pos)
+        # Handle the opening parenthesis
+        if state.current_char == '(':
+            state.advance()  # move past the opening parenthesis
             
-            # Update position
-            for _ in range(len(match.group(0))):
+            # Skip any whitespace after the parenthesis
+            while state.current_char and state.current_char.isspace():
                 state.advance()
+            
+            # Now handle the argument based on its type
+            if state.current_char:
+                arg_start_pos = state.position.copy()
+                if state.current_char.isdigit():
+                    # Handle numeric argument
+                    self._handle_number(state, arg_start_pos)
+                elif state.current_char in '"\'':
+                    # Handle string argument
+                    self._handle_string(state, arg_start_pos)
+                elif state.current_char.isalpha() or state.current_char == '_':
+                    # Handle identifier argument
+                    self._handle_identifier(state, arg_start_pos)
+            
+            # Look for and handle the closing parenthesis
+            while state.current_char and state.current_char.isspace():
+                state.advance()
+                
+            if state.current_char == ')':
+                state.advance()
+            else:
+                raise LexerError(
+                    "Expected closing parenthesis",
+                    state.position.line,
+                    state.position.column,
+                    state.get_context()
+                )
 
     def _handle_var_declaration(self, state: LexerState, start_pos: Position) -> None:
         # Match just the 'let' and identifier part
