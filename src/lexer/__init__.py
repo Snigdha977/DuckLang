@@ -1,311 +1,802 @@
-# Importing regular expression module
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import List, Dict, Any, Tuple, Optional, Set
 import re
-# Importing syntax definitions
 from lib.syntax import syntax
-# Importing token types dictionary
-from src.lexer.token_types import TOKEN_TYPES
 
+class LexerError(Exception):
+    def __init__(self, message: str, line: int, column: int, context: str = ""):
+        self.message = message
+        self.line = line
+        self.column = column
+        self.context = context
+        super().__init__(f"Line {line}, Column {column}: {message}\nContext: {context}")
 
-# Retrieve the print command syntax from the syntax dictionary
-print_command = syntax.get("PRINT_COMMAND", "No Name Defined")
-# Retrieve the variable declaration command syntax from the syntax dictionary
-var_declare_command = syntax.get("VARIABLE_DECLARE", "No Name Defined")
+class TokenType(Enum):
 
-def identify_literal_type(value_str):
-    """Identify the type of a literal value."""
-    value_str = value_str.strip()
+    # custom tokens
+    PRINT_COMMAND = "PRINT_COMMAND"
+    VARIABLE_DECLARE = "VARIABLE_DECLARE"
 
-    # Check for None/null literals
-    if value_str.lower() in ('none', 'null'):
-        return TOKEN_TYPES["NONE_LITERAL"], None
-        
-    # Check for boolean literals (true/false)
-    if value_str.lower() in ('true', 'false'):
-        return TOKEN_TYPES["BOOLEAN_LITERAL"], value_str.lower() == 'true'
-        
-    # Check for float literals (including scientific notation)
-    try:
-        if '.' in value_str or 'e' in value_str.lower():
-            float_val = float(value_str)
-            return TOKEN_TYPES["FLOAT_LITERAL"], float_val
-    except ValueError:
-        pass
-        
-    # Check for integer literals (supports different bases: hex, binary, octal)
-    try:
-        if value_str.startswith('0x'):
-            int_val = int(value_str[2:], 16)
-        elif value_str.startswith('0b'):
-            int_val = int(value_str[2:], 2)
-        elif value_str.startswith('0o'):
-            int_val = int(value_str[2:], 8)
-        else:
-            int_val = int(value_str)
-        return TOKEN_TYPES["INTEGER_LITERAL"], int_val
-    except ValueError:
-        pass
+    # Basic types
+    IDENTIFIER = "IDENTIFIER"
+    INTEGER = "INTEGER"
+    FLOAT = "FLOAT"
+    STRING = "STRING"
+    BYTES = "BYTES"
+    BOOLEAN = "BOOLEAN"
+    NONE = "NONE"
     
-    # If it’s a string literal, it should be enclosed in quotes
-    if (value_str.startswith('"') and value_str.endswith('"')) or \
-       (value_str.startswith("'") and value_str.endswith("'")):
-        return TOKEN_TYPES["STRING_LITERAL"], value_str[1:-1]
+    # Collections
+    LIST_START = "LIST_START"
+    LIST_END = "LIST_END"
+    TUPLE_START = "TUPLE_START"
+    TUPLE_END = "TUPLE_END"
+    DICT_START = "DICT_START"
+    DICT_END = "DICT_END"
+    SET_START = "SET_START"
+    SET_END = "SET_END"
+    
+    # Operators
+    PLUS = "PLUS"
+    MINUS = "MINUS"
+    MULTIPLY = "MULTIPLY"
+    DIVIDE = "DIVIDE"
+    FLOOR_DIVIDE = "FLOOR_DIVIDE"
+    POWER = "POWER"
+    MODULO = "MODULO"
+    
+    # Comparisons
+    EQUALS = "EQUALS"
+    NOT_EQUALS = "NOT_EQUALS"
+    LESS_THAN = "LESS_THAN"
+    GREATER_THAN = "GREATER_THAN"
+    LESS_EQUAL = "LESS_EQUAL"
+    GREATER_EQUAL = "GREATER_EQUAL"
+    
+    # Logical
+    AND = "AND"
+    OR = "OR"
+    NOT = "NOT"
+    IN = "IN"
+    NOT_IN = "NOT_IN"
+    IS = "IS"
+    IS_NOT = "IS_NOT"
+    
+    # Comprehension
+    FOR = "FOR"
+    IF = "IF"
+    ELSE = "ELSE"
+    
+    # Other
+    COMMA = "COMMA"
+    DOT = "DOT"
+    COLON = "COLON"
+    ASSIGN = "ASSIGN"
+    ARROW = "ARROW"
+    LAMBDA = "LAMBDA"
+    WALRUS = "WALRUS"
+
+@dataclass
+class Position:
+    line: int
+    column: int
+    index: int
+    file: str = "<unknown>"
+
+    def advance(self, char: str = '') -> None:
+        self.index += 1
+        if char == '\n':
+            self.line += 1
+            self.column = 1
+        else:
+            self.column += 1
+
+    def copy(self) -> 'Position':
+        return Position(self.line, self.column, self.index, self.file)
+
+@dataclass
+class Token:
+    type: TokenType
+    value: Any
+    start_pos: Position  # Keep this for internal use
+    end_pos: Position    # Keep this for internal use
+    raw: str
+    context: str = ""
+    position: int = field(init=False)  # Add this field
+
+    def __post_init__(self):
+        if not self._validate():
+            raise ValueError(f"Invalid token value for type {self.type}: {self.value}")
+        # Set position to the character index
+        self.position = self.start_pos.index
+
+    def _validate(self) -> bool:
+        try:
+            if self.type == TokenType.INTEGER:
+                return isinstance(self.value, int)
+            elif self.type == TokenType.FLOAT:
+                return isinstance(self.value, float)
+            elif self.type == TokenType.STRING:
+                return isinstance(self.value, str)
+            elif self.type == TokenType.BOOLEAN:
+                return isinstance(self.value, bool)
+            elif self.type == TokenType.NONE:
+                return self.value is None
+            return True
+        except Exception:
+            return False
+
+class LexerState:
+    def __init__(self, source: str, filename: str = "<unknown>"):
+        self.source = source
+        self.position = Position(1, 1, 0, filename)
+        self.current_char = source[0] if source else None
+        self.tokens: List[Token] = []
+        self.indentation_stack: List[int] = [0]
+        self.nesting_levels = {
+            '(': 0, '[': 0, '{': 0
+        }
+        self.context_window = 50  # Characters of context to store for error messages
+
+    def advance(self) -> None:
+        try:
+            self.position.advance(self.current_char)
+            self.current_char = self.source[self.position.index] if self.position.index < len(self.source) else None
+        except IndexError:
+            self.current_char = None
+
+    def peek(self, offset: int = 1) -> Optional[str]:
+        peek_pos = self.position.index + offset
+        return self.source[peek_pos] if peek_pos < len(self.source) else None
+
+    def get_context(self) -> str:
+        start = max(0, self.position.index - self.context_window)
+        end = min(len(self.source), self.position.index + self.context_window)
+        return self.source[start:end]
+
+class ComplexLexer:
+    def __init__(self):
         
-    # Return as unknown if no match is found
-    return TOKEN_TYPES["UNKNOWN"], value_str
-
-def lexer(source_code):
-    """Function for lexical analysis to tokenize the source code."""
-    tokens = []
-    position = 0  # Initialize the position pointer to track character position
-
-    while position < len(source_code):
-        # Skip whitespace
-        match = re.match(r'\s+', source_code[position:])
-        if match:
-            position += len(match.group(0))  # Move the position forward
-            continue
-
-        # Match print statements (e.g., print("Hello World"))
-        match = re.match(rf'\b{re.escape(print_command)}\(([^)]+)\)', source_code[position:])
-        if match:
-            # Create a print token with its position and content
-            print_token = {
-                'type': TOKEN_TYPES["PRINT_COMMAND"],
-                'value': match.group(0),
-                'position': position,
-                'raw': match.group(0)
-            }
-            tokens.append(print_token)
-            
-            # Analyze the content inside print statement (literal or expression)
-            content = match.group(1).strip()
-            literal_type, literal_value = identify_literal_type(content)
-            
-            # Create a value token (literal) with the identified type
-            value_token = {
-                'type': literal_type,
-                'value': literal_value,
-                'position': position + len(print_command) + 1,  # Position after print command
-                'raw': content
-            }
-            tokens.append(value_token)
-            
-            position += len(match.group(0))  # Move position to the end of the matched print statement
-            continue
-
+        self.print_command = syntax.get("PRINT_COMMAND", "quack")
+        self.var_declare_command = syntax.get("VARIABLE_DECLARE", "let")
+        self._init_patterns()
+        self._init_keywords()
+        self._init_operators()
         
-        # Match list start (e.g., [ )
-        match = re.match(r'\[', source_code[position:])
-        if match:
-            list_start_token = {
-                'type': TOKEN_TYPES["LIST_START"],
-                'value': '[',
-                'position': position,
-                'raw': '['
-            }
-            tokens.append(list_start_token)
-            position += len(match.group(0))
 
-            # Now, match the list values (numbers, strings, etc.) inside the list
-            list_values = []
-            inside_list = True
-            while inside_list:
-                match = re.match(r'\s*([^\[\],]+)\s*(,|\])', source_code[position:])
-                if match:
-                    value_str = match.group(1).strip()
-                    literal_type, literal_value = identify_literal_type(value_str)
+    def _init_patterns(self):
+        self.patterns = {
+            'number': re.compile(r'''
+                (?:\d*\.)?\d+(?:[eE][+-]?\d+)?  # Regular numbers and scientific notation
+                |
+                0[xX][0-9a-fA-F]+               # Hex numbers
+                |
+                0[bB][01]+                      # Binary numbers
+                |
+                0[oO][0-7]+                     # Octal numbers
+            ''', re.VERBOSE),
+            'identifier': re.compile(r'[a-zA-Z_][a-zA-Z0-9_]*'),
+            'string': re.compile(r'''
+                (?:
+                    [fF]?                           # Optional f-string prefix
+                    (?:
+                        |
+                        "(?:\\.|[^"\\])*"          # Double quoted string
+                        |
+                        '(?:\\.|[^'\\])*'          # Single quoted string
+                    )
+                )
+                |
+                (?:
+                    [rR]                           # Raw string prefix
+                    (?:
+                        
+                        |
+                        "(?:\\.|[^"\\])*"          
+                        |
+                        '(?:\\.|[^'\\])*'          
+                    )
+                )
+            ''', re.VERBOSE),
+            # 'print_command': re.compile(
+            #     rf'\b{re.escape(self.print_command)}\s*\(((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*)\)'
+            # ),
 
-                    value_token = {
-                        'type': literal_type,
-                        'value': literal_value,
-                        'position': position,
-                        'raw': value_str
-                    }
-                    list_values.append(value_token)
+            'print_command': re.compile(
+            rf'{re.escape(self.print_command)}\s*\(' # Just match 'quack('
+        ),
+            # 'var_declare': re.compile(
+            #     rf'\b{re.escape(self.var_declare_command)}\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*((?:[^;\n]+|\[(?:[^\[\]]+|\[[^\[\]]*\])*\])*)'
+            # ),
+            'bytes': re.compile(r'[bB](?:"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\')'),
+            'whitespace': re.compile(r'\s+'),
+            'comment': re.compile(r'#[^\n]*'),
+        }
+    def _init_keywords(self):
+        self.keywords = {
+            'and': TokenType.AND,
+            'or': TokenType.OR,
+            'not': TokenType.NOT,
+            'in': TokenType.IN,
+            'is': TokenType.IS,
+            'None': TokenType.NONE,
+            'True': TokenType.BOOLEAN,
+            'False': TokenType.BOOLEAN,
+            'lambda': TokenType.LAMBDA,
+            'for': TokenType.FOR,
+            'if': TokenType.IF,
+            'else': TokenType.ELSE,
+        }
 
-                    tokens.append(value_token)  # Add the token for the list value
+    def _init_operators(self):
+        self.operators = {
+            '+': TokenType.PLUS,
+            '-': TokenType.MINUS,
+            '*': TokenType.MULTIPLY,
+            '/': TokenType.DIVIDE,
+            '//': TokenType.FLOOR_DIVIDE,
+            '**': TokenType.POWER,
+            '%': TokenType.MODULO,
+            '=': TokenType.ASSIGN,
+            '==': TokenType.EQUALS,
+            '!=': TokenType.NOT_EQUALS,
+            '<': TokenType.LESS_THAN,
+            '>': TokenType.GREATER_THAN,
+            '<=': TokenType.LESS_EQUAL,
+            '>=': TokenType.GREATER_EQUAL,
+            ':=': TokenType.WALRUS,
+            '->': TokenType.ARROW,
+        }
 
-                    position += len(match.group(0))  # Move the position forward
+    def tokenize(self, source: str, filename: str = "<unknown>") -> List[Token]:
+        state = LexerState(source, filename)
+        
+        try:
+            while state.current_char is not None:
+                start_pos = state.position.copy()
 
-                    # Handle comma (if exists)
-                    if match.group(2) == ',':
-                        comma_token = {
-                            'type': TOKEN_TYPES["COMMA"],
-                            'value': ',',
-                            'position': position,
-                            'raw': ','
-                        }
-                        tokens.append(comma_token)
-                        continue
-
-                    # If we encounter the closing bracket
-                    if match.group(2) == ']':
-                        inside_list = False
+                # Skip comments
+                if state.current_char == '#':
+                    self._handle_comment(state)
                     continue
-                break
 
-            # Store the end of list token (])
-            list_end_token = {
-                'type': TOKEN_TYPES["LIST_END"],
-                'value': ']',
-                'position': position,
-                'raw': ']'
-            }
-            tokens.append(list_end_token)
-            position += len(match.group(0))  # Move position after list
-
-            continue
-        # Match dictionary start (e.g., { )
-        match = re.match(r'\{', source_code[position:])
-        if match:
-            dict_start_token = {
-                'type': TOKEN_TYPES["DICT_START"],
-                'value': '{',
-                'position': position,
-                'raw': '{'
-            }
-            tokens.append(dict_start_token)
-            position += len(match.group(0))
-
-            # Check for dictionary name (optional, like in Python) - e.g., dict_name = {'key': 'value'}
-            match = re.match(r'\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*\{', source_code[position:])
-            if match:
-                dict_name_token = {
-                    'type': TOKEN_TYPES["IDENTIFIER"],
-                    'value': match.group(1),
-                    'position': position,
-                    'raw': match.group(1)
-                }
-                tokens.append(dict_name_token)
-                position += len(match.group(0))  # Move position after dictionary name assignment
-
-            # Now, match the dictionary key-value pairs
-            dict_values = []
-            inside_dict = True
-            while inside_dict:
-                match = re.match(r'\s*([^\{\}:]+)\s*:\s*([^\{\},]+)\s*(,|\})', source_code[position:])
-                if match:
-                    key_str = match.group(1).strip()
-                    value_str = match.group(2).strip()
-
-                    # Identify the literal type for the key and value
-                    key_type, key_value = identify_literal_type(key_str)
-                    value_type, value_value = identify_literal_type(value_str)
-
-                    # Create the key token
-                    key_token = {
-                        'type': key_type,
-                        'value': key_value,
-                        'position': position + len(match.group(1)),  # Position after the key
-                        'raw': key_str
-                    }
-
-                    # Create the colon token
-                    colon_token = {
-                        'type': TOKEN_TYPES["COLON"],
-                        'value': ':',
-                        'position': position + len(match.group(1)),  # Position immediately after the key
-                        'raw': ':'
-                    }
-
-                    # Create the value token
-                    value_token = {
-                        'type': value_type,
-                        'value': value_value,
-                        'position': position + len(match.group(1)) + 1,  # Position right after the colon
-                        'raw': value_str
-                    }
-
-                    # Add the key, colon, and value tokens to the dictionary
-                    tokens.append(key_token)
-                    tokens.append(colon_token)
-                    tokens.append(value_token)
-
-                    # Add the key-value pair to the dictionary
-                    dict_values.append((key_token, value_token))
-
-                    position += len(match.group(0))  # Move position forward
-
-                    # Handle comma or closing brace
-                    if match.group(3) == ',':
-                        comma_token = {
-                            'type': TOKEN_TYPES["COMMA"],
-                            'value': ',',
-                            'position': position,
-                            'raw': ','
-                        }
-                        tokens.append(comma_token)
-                    elif match.group(3) == '}':
-                        inside_dict = False
+                # Handle whitespace and indentation
+                if state.current_char.isspace():
+                    self._handle_whitespace(state)
                     continue
-                break
 
-            # Store the end of dictionary token (})
-            dict_end_token = {
-                'type': TOKEN_TYPES["DICT_END"],
-                'value': '}',
-                'position': position,
-                'raw': '}'
-            }
-            tokens.append(dict_end_token)
-            position += len(match.group(0))  # Move position after dictionary
+                # Check for print command
+                if state.source[state.position.index:].startswith(self.print_command):
+                    self._handle_print_command(state, start_pos)
+                    continue
 
-            continue
+                # Check for variable declaration
+                if state.source[state.position.index:].startswith(self.var_declare_command):
+                    self._handle_var_declaration(state, start_pos)
+                    continue
 
+                # Handle numbers
+                if state.current_char.isdigit() or state.current_char == '.':
+                    self._handle_number(state, start_pos)
+                    continue
 
+                # Handle strings
+                if state.current_char in '"\'':
+                    self._handle_string(state, start_pos)
+                    continue
 
-        # Match variable declarations (e.g., let x = 5)
-        match = re.match(
-            rf'\b{re.escape(var_declare_command)}\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([^;\n]+)',
-            source_code[position:]
+                # Handle bytes
+                if state.current_char in 'bB' and state.peek() in '"\'':
+                    self._handle_bytes(state, start_pos)
+                    continue
+
+                # Handle identifiers and keywords
+                if state.current_char.isalpha() or state.current_char == '_':
+                    self._handle_identifier(state, start_pos)
+                    continue
+
+                # Handle operators and delimiters
+                self._handle_operator_or_delimiter(state, start_pos)
+
+        except Exception as e:
+            if not isinstance(e, LexerError):
+                context = state.get_context()
+                raise LexerError(str(e), state.position.line, state.position.column, context)
+            raise
+
+        # Validate final state
+        self._validate_final_state(state)
+        return state.tokens
+
+    def _handle_comment(self, state: LexerState) -> None:
+        while state.current_char and state.current_char != '\n':
+            state.advance()
+
+    def _handle_whitespace(self, state: LexerState) -> None:
+        while state.current_char and state.current_char.isspace():
+            state.advance()
+    
+    def _handle_print_command(self, state: LexerState, start_pos: Position) -> None:
+        # First, handle the quack keyword itself
+        command_str = self.print_command
+        self._add_token(
+            state,
+            TokenType.PRINT_COMMAND,
+            command_str,
+            start_pos,
+            command_str
         )
-        if match:
-            # Create a token for the variable declaration command (e.g., let)
-            var_decl_token = {
-                'type': TOKEN_TYPES["VARIABLE_DECLARE"],
-                'value': var_declare_command,
-                'position': position,
-                'raw': var_declare_command
-            }
-            tokens.append(var_decl_token)
-
         
-
-            # Create a token for the variable name (identifier)
-            identifier_token = {
-                'type': TOKEN_TYPES["IDENTIFIER"],
-                'value': match.group(1),
-                'position': position + len(var_declare_command) + 1,  # Position after 'let'
-                'raw': match.group(1)
-            }
-            tokens.append(identifier_token)
-
-            # Create a token for the equals sign in the variable declaration
-            equals_token = {
-                'type': TOKEN_TYPES["EQUALS"],
-                'value': '=',
-                'position': position + len(var_declare_command) + len(match.group(1)) + 1,  # Position after variable name
-                'raw': '='
-            }
-            tokens.append(equals_token)
-
-            # Identify the type of the value assigned to the variable
-            value_str = match.group(2).strip()
-            literal_type, literal_value = identify_literal_type(value_str)
+        # Advance past 'quack'
+        for _ in range(len(command_str)):
+            state.advance()
             
-            # Create a token for the assigned value with the identified type
-            value_token = {
-                'type': literal_type,
-                'value': literal_value,
-                'position': position + len(match.group(0)) - len(value_str),
-                'raw': value_str
-            }
-            tokens.append(value_token)
+        # Skip any whitespace
+        while state.current_char and state.current_char.isspace():
+            state.advance()
             
-            position += len(match.group(0))  # Move position to the end of the matched variable declaration
-            continue
+        # Handle the opening parenthesis
+        if state.current_char == '(':
+            state.advance()  # move past the opening parenthesis
+            
+            # Skip any whitespace after the parenthesis
+            while state.current_char and state.current_char.isspace():
+                state.advance()
+            
+            # Now handle the argument based on its type
+            if state.current_char:
+                arg_start_pos = state.position.copy()
+                if state.current_char.isdigit():
+                    # Handle numeric argument
+                    self._handle_number(state, arg_start_pos)
+                elif state.current_char in '"\'':
+                    # Handle string argument
+                    self._handle_string(state, arg_start_pos)
+                elif state.current_char.isalpha() or state.current_char == '_':
+                    # Handle identifier argument
+                    self._handle_identifier(state, arg_start_pos)
+            
+            # Look for and handle the closing parenthesis
+            while state.current_char and state.current_char.isspace():
+                state.advance()
+                
+            if state.current_char == ')':
+                state.advance()
+            else:
+                raise LexerError(
+                    "Expected closing parenthesis",
+                    state.position.line,
+                    state.position.column,
+                    state.get_context()
+                )
 
-        # If no match is found for any known patterns, move to the next character
-        position += 1
+    def _handle_var_declaration(self, state: LexerState, start_pos: Position) -> None:
+        # Match just the 'let' and identifier part
+        var_pattern = re.compile(rf'\b{re.escape(self.var_declare_command)}\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*')
+        match = var_pattern.match(state.source[state.position.index:])
+        
+        if match:
+            # Add variable declaration token
+            self._add_token(
+                state,
+                TokenType.VARIABLE_DECLARE,
+                self.var_declare_command,
+                start_pos,
+                self.var_declare_command
+            )
+            
+            # Add identifier token
+            identifier_pos = Position(
+                start_pos.line,
+                start_pos.column + len(self.var_declare_command) + 1,
+                start_pos.index + len(self.var_declare_command) + 1,
+                start_pos.file
+            )
+            self._add_token(
+                state,
+                TokenType.IDENTIFIER,
+                match.group(1),
+                identifier_pos,
+                match.group(1)
+            )
+            
+            # Add equals token
+            equals_pos = Position(
+                identifier_pos.line,
+                identifier_pos.column + len(match.group(1)) + 1,
+                identifier_pos.index + len(match.group(1)) + 1,
+                start_pos.file
+            )
+            self._add_token(
+                state,
+                TokenType.ASSIGN,
+                "=",
+                equals_pos,
+                "="
+            )
+            
+            # Advance past the 'let', identifier, and equals sign
+            for _ in range(len(match.group(0))):
+                state.advance()
+                
+            # Now handle the expression
+            expression_pos = state.position.copy()
+            self._handle_expression(state, expression_pos)
 
-    return tokens  # Return the list of tokenized results
+    def _handle_number(self, state: LexerState, start_pos: Position) -> None:
+        num_str = ''
+        while state.current_char and (state.current_char.isdigit() or state.current_char in '.eE+-xXbBoO'):
+            num_str += state.current_char
+            state.advance()
+
+        try:
+            if '.' in num_str or 'e' in num_str.lower():
+                value = float(num_str)
+                token_type = TokenType.FLOAT
+            else:
+                if num_str.startswith(('0x', '0X')):
+                    value = int(num_str, 16)
+                elif num_str.startswith(('0b', '0B')):
+                    value = int(num_str, 2)
+                elif num_str.startswith(('0o', '0O')):
+                    value = int(num_str, 8)
+                else:
+                    value = int(num_str)
+                token_type = TokenType.INTEGER
+
+            self._add_token(state, token_type, value, start_pos, num_str)
+        except ValueError:
+            raise LexerError(f"Invalid number format: {num_str}", 
+                           start_pos.line, 
+                           start_pos.column,
+                           state.get_context())
+
+    def _handle_string(self, state: LexerState, start_pos: Position) -> None:
+        is_raw = state.current_char in 'rR'
+        if is_raw:
+            state.advance()
+        
+        quote = state.current_char
+        string = quote
+        state.advance()
+        
+        while state.current_char and (state.current_char != quote or string[-1] == '\\'):
+            if state.current_char is None:
+                raise LexerError("Unterminated string", start_pos.line, start_pos.column, state.get_context())
+            string += state.current_char
+            state.advance()
+        
+        if state.current_char == quote:
+            string += quote
+            state.advance()
+        else:
+            raise LexerError("Unterminated string", start_pos.line, start_pos.column, state.get_context())
+
+        # Process the string value
+        try:
+            if is_raw:
+                value = string[2:-1]
+            else:
+                value = string[1:-1].encode('utf-8').decode('unicode_escape')
+            self._add_token(state, TokenType.STRING, value, start_pos, string)
+        except UnicodeError as e:
+            raise LexerError(f"Invalid string escape sequence: {e}", 
+                           start_pos.line, 
+                           start_pos.column,
+                           state.get_context())
+
+    def _handle_bytes(self, state: LexerState, start_pos: Position) -> None:
+        bytes_str = ''
+        while state.current_char and len(bytes_str) < 2:
+            bytes_str += state.current_char
+            state.advance()
+        
+        quote = state.current_char
+        if quote not in '"\'':
+            raise LexerError("Invalid bytes literal", start_pos.line, start_pos.column, state.get_context())
+        
+        bytes_str += quote
+        state.advance()
+        
+        while state.current_char and (state.current_char != quote or bytes_str[-1] == '\\'):
+            if state.current_char is None:
+                raise LexerError("Unterminated bytes literal", 
+                               start_pos.line, 
+                               start_pos.column,
+                               state.get_context())
+            bytes_str += state.current_char
+            state.advance()
+        
+        if state.current_char == quote:
+            bytes_str += quote
+            state.advance()
+            try:
+                value = eval(bytes_str)  # Safe for bytes literals
+                self._add_token(state, TokenType.BYTES, value, start_pos, bytes_str)
+            except SyntaxError:
+                raise LexerError(f"Invalid bytes literal: {bytes_str}", 
+                               start_pos.line, 
+                               start_pos.column,
+                               state.get_context())
+        else:
+            raise LexerError("Unterminated bytes literal", 
+                           start_pos.line, 
+                           start_pos.column,
+                           state.get_context())
+
+    def _handle_identifier(self, state: LexerState, start_pos: Position) -> None:
+        identifier = ''
+        while state.current_char and (state.current_char.isalnum() or state.current_char == '_'):
+            identifier += state.current_char
+            state.advance()
+
+        if identifier in self.keywords:
+            token_type = self.keywords[identifier]
+            value = True if identifier == 'True' else False if identifier == 'False' else None
+            self._add_token(state, token_type, value, start_pos, identifier)
+        else:
+            self._add_token(state, TokenType.IDENTIFIER, identifier, start_pos, identifier)
+
+    def _handle_operator_or_delimiter(self, state: LexerState, start_pos: Position) -> None:
+        if state.current_char in '([{':
+            self._handle_opening_delimiter(state, start_pos)
+        elif state.current_char in ')]}':
+            self._handle_closing_delimiter(state, start_pos)
+        elif state.current_char == '=' and state.peek() == '=':
+            # Handle equality operator
+            self._add_token(state, TokenType.EQUALS, '==', start_pos, '==')
+            state.advance()
+            state.advance()
+        elif state.current_char == '=':
+            # Handle assignment
+            self._add_token(state, TokenType.ASSIGN, '=', start_pos, '=')
+            state.advance()
+        else:
+            self._handle_operator(state, start_pos)
+
+    def _handle_expression(self, state: LexerState, start_pos: Position) -> None:
+        """Handle complex expressions with nested parentheses"""
+        nesting_level = 0
+        expression = ''
+        
+        while state.current_char:
+            if state.current_char == '(':
+                nesting_level += 1
+            elif state.current_char == ')':
+                nesting_level -= 1
+                if nesting_level < 0:
+                    break
+            
+            expression += state.current_char
+            state.advance()
+            
+            if nesting_level == 0:
+                break
+                
+        # Now tokenize the expression contents
+        if expression:
+            self._tokenize_expression_contents(state, expression, start_pos)
+
+    def _tokenize_expression_contents(self, state: LexerState, expression: str, start_pos: Position) -> None:
+        """Tokenize the contents of a complex expression."""
+        current_token = ''
+        i = 0
+        
+        while i < len(expression):
+            char = expression[i]
+            
+            # Handle numbers
+            if char.isdigit() or char == '.':
+                num_str = ''
+                while i < len(expression) and (expression[i].isdigit() or expression[i] == '.'):
+                    num_str += expression[i]
+                    i += 1
+                i -= 1  # Back up one to account for the outer loop increment
+                
+                try:
+                    if '.' in num_str:
+                        value = float(num_str)
+                        self._add_token(state, TokenType.FLOAT, value, start_pos, num_str)
+                    else:
+                        value = int(num_str)
+                        self._add_token(state, TokenType.INTEGER, value, start_pos, num_str)
+                except ValueError:
+                    raise LexerError(f"Invalid number: {num_str}", 
+                                start_pos.line, 
+                                start_pos.column,
+                                state.get_context())
+            
+            # Handle identifiers
+            elif char.isalpha() or char == '_':
+                identifier = ''
+                while i < len(expression) and (expression[i].isalnum() or expression[i] == '_'):
+                    identifier += expression[i]
+                    i += 1
+                i -= 1  # Back up one
+                
+                if identifier in self.keywords:
+                    token_type = self.keywords[identifier]
+                    value = True if identifier == 'True' else False if identifier == 'False' else None
+                    self._add_token(state, token_type, value, start_pos, identifier)
+                else:
+                    self._add_token(state, TokenType.IDENTIFIER, identifier, start_pos, identifier)
+            
+            # Handle operators
+            elif char in '+-*/%':
+                if i + 1 < len(expression) and expression[i:i+2] in self.operators:
+                    operator = expression[i:i+2]
+                    self._add_token(state, self.operators[operator], operator, start_pos, operator)
+                    i += 1
+                else:
+                    operator = char
+                    self._add_token(state, self.operators[operator], operator, start_pos, operator)
+            
+            # Handle parentheses
+            elif char == '(':
+                self._add_token(state, TokenType.TUPLE_START, '(', start_pos, '(')
+                state.nesting_levels['('] += 1
+            elif char == ')':
+                self._add_token(state, TokenType.TUPLE_END, ')', start_pos, ')')
+                state.nesting_levels['('] -= 1
+            
+            # Handle comparison operators
+            elif char in '<>!=':
+                if i + 1 < len(expression) and expression[i:i+2] in self.operators:
+                    operator = expression[i:i+2]
+                    self._add_token(state, self.operators[operator], operator, start_pos, operator)
+                    i += 1
+                else:
+                    operator = char
+                    self._add_token(state, self.operators[operator], operator, start_pos, operator)
+            
+            # Skip whitespace
+            elif char.isspace():
+                pass
+            
+            else:
+                raise LexerError(f"Invalid character in expression: {char}", 
+                            start_pos.line, 
+                            start_pos.column,
+                            state.get_context())
+            
+            i += 1
+
+    def _handle_opening_delimiter(self, state: LexerState, start_pos: Position) -> None:
+        delimiter = state.current_char
+        state.nesting_levels[delimiter] += 1
+        
+        token_type = {
+            '(': TokenType.TUPLE_START,
+            '[': TokenType.LIST_START,
+            '{': TokenType.DICT_START
+        }[delimiter]
+        
+        # Check for set literal
+        if delimiter == '{' and self._is_set_literal(state):
+            token_type = TokenType.SET_START
+            
+        self._add_token(state, token_type, delimiter, start_pos, delimiter)
+        state.advance()
+
+    def _handle_closing_delimiter(self, state: LexerState, start_pos: Position) -> None:
+        delimiter = state.current_char
+        matching_open = {')': '(', ']': '[', '}': '{'}[delimiter]
+        
+        if state.nesting_levels[matching_open] == 0:
+            raise LexerError(f"Unmatched closing delimiter: {delimiter}", 
+                           start_pos.line, 
+                           start_pos.column,
+                           state.get_context())
+                           
+        state.nesting_levels[matching_open] -= 1
+        
+        token_type = {
+            ')': TokenType.TUPLE_END,
+            ']': TokenType.LIST_END,
+            '}': TokenType.DICT_END if not self._is_set_literal(state) else TokenType.SET_END
+        }[delimiter]
+        
+        self._add_token(state, token_type, delimiter, start_pos, delimiter)
+        state.advance()
+
+    def _handle_operator(self, state: LexerState, start_pos: Position) -> None:
+        # Try to match two-character operators first
+        two_char = state.current_char + (state.peek() or '')
+        if two_char in self.operators:
+            token_type = self.operators[two_char]
+            self._add_token(state, token_type, two_char, start_pos, two_char)
+            state.advance()
+            state.advance()
+            return
+
+        # Handle single-character operators
+        if state.current_char in self.operators:
+            token_type = self.operators[state.current_char]
+            self._add_token(state, token_type, state.current_char, start_pos, state.current_char)
+            state.advance()
+            return
+
+        # Handle special characters
+        if state.current_char in ',:':
+            token_type = {
+                ',': TokenType.COMMA,
+                ':': TokenType.COLON
+            }[state.current_char]
+            self._add_token(state, token_type, state.current_char, start_pos, state.current_char)
+            state.advance()
+            return
+
+        raise LexerError(f"Invalid character: {state.current_char}", 
+                        start_pos.line, 
+                        start_pos.column,
+                        state.get_context())
+
+    def _is_set_literal(self, state: LexerState) -> bool:
+        """Determine if a curly brace represents a set literal rather than a dict."""
+        # Look ahead for a colon to distinguish between set and dict
+        pos = state.position.index
+        nesting = 0
+        while pos < len(state.source):
+            char = state.source[pos]
+            if char == '{':
+                nesting += 1
+            elif char == '}':
+                nesting -= 1
+                if nesting < 0:
+                    return True  # No colon found before closing brace
+            elif char == ':' and nesting == 0:
+                return False  # Found colon at same nesting level
+            pos += 1
+        return True
+
+    def _add_token(self, state: LexerState, token_type: TokenType, 
+                  value: Any, start_pos: Position, raw: str) -> None:
+        end_pos = state.position.copy()
+        context = state.get_context()
+        token = Token(token_type, value, start_pos, end_pos, raw, context)
+        state.tokens.append(token)
+
+    def _validate_final_state(self, state: LexerState) -> None:
+        """Validate the final state of the lexer."""
+        for char, level in state.nesting_levels.items():
+            if level > 0:
+                raise LexerError(f"Unclosed delimiter: {char}",
+                               state.position.line,
+                               state.position.column,
+                               state.get_context())
+
+        # Check for any other unfinished constructs
+        if state.indentation_stack != [0]:
+            raise LexerError("Inconsistent indentation at end of file",
+                           state.position.line,
+                           state.position.column,
+                           state.get_context())
+        
+def lexer(source_code: str) -> list:
+    """
+    Tokenize Python source code into a list of token dictionaries.
+    
+    Args:
+        source_code (str): Source code to tokenize
+        
+    Returns:
+        list: List of token dictionaries with type, value and position
+    """
+    # Initialize the complex lexer
+    complex_lexer = ComplexLexer()
+    
+    # Get raw tokens
+    raw_tokens = complex_lexer.tokenize(source_code)
+    
+    # Convert to expected format
+    formatted_tokens = []
+    for token in raw_tokens:
+        formatted_token = {
+            'type': token.type.value,  # Convert enum to string
+            'value': token.value,
+            'position': token.position,  
+        }
+        formatted_tokens.append(formatted_token)
+        
+    return formatted_tokens
