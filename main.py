@@ -1,16 +1,14 @@
-"""Module providing Syntax Dictionary."""
-from lib.syntax import syntax
 """Module providing Lexer Function"""
 from src.lexer import lexer
 
-
-
 source_code = '''
-quack("Hello World")
-duck my_int = 42
-duck my_float = 3.14
-quck(my_int+my_float)
-duck my_bool = True
+# Variable declarations and assignments
+quack("Hello")
+let my_count = ((( 7 + my_idea ) * 7437 + 949) == 84)
+if (x = 10):
+    y = x + 20 * 3
+    if (a == b):
+        quack(90)
 '''
 
 def run_lexer(source_code):
