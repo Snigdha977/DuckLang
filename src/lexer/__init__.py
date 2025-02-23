@@ -77,6 +77,21 @@ class TokenType(Enum):
     LAMBDA = "LAMBDA"
     WALRUS = "WALRUS"
 
+    # token types for control flow
+    ELIF = "ELIF"
+    WHILE = "WHILE"
+    BREAK = "BREAK"
+    CONTINUE = "CONTINUE"
+    
+    # Scope and statement tokens
+    INDENT = "INDENT"
+    DEDENT = "DEDENT"
+    BLOCK_START = "BLOCK_START"
+    BLOCK_END = "BLOCK_END"
+    SEMICOLON = "SEMICOLON"
+    LINE_CONTINUATION = "LINE_CONTINUATION"
+
+
 @dataclass
 class Position:
     line: int
@@ -138,6 +153,8 @@ class LexerState:
             '(': 0, '[': 0, '{': 0
         }
         self.context_window = 50  # Characters of context to store for error messages
+
+
 
     def advance(self) -> None:
         try:
@@ -227,6 +244,10 @@ class ComplexLexer:
             'for': TokenType.FOR,
             'if': TokenType.IF,
             'else': TokenType.ELSE,
+            'elif': TokenType.ELIF,
+            'while': TokenType.WHILE,
+            'break': TokenType.BREAK,
+            'continue': TokenType.CONTINUE,
         }
 
     def _init_operators(self):
@@ -255,6 +276,17 @@ class ComplexLexer:
         try:
             while state.current_char is not None:
                 start_pos = state.position.copy()
+
+                # Handle line start indentation
+                if state.position.column == 1:
+                    self._handle_indentation(state)
+
+                # Handle line continuation
+                if state.current_char == '\\' and state.peek() == '\n':
+                    self._add_token(state, TokenType.LINE_CONTINUATION, '\\', start_pos, '\\')
+                    state.advance()  # Skip backslash
+                    state.advance()  # Skip newline
+                    continue
 
                 # Skip comments
                 if state.current_char == '#':
@@ -296,8 +328,19 @@ class ComplexLexer:
                     self._handle_identifier(state, start_pos)
                     continue
 
+                # Add handling for compound statements
+                if state.current_char.isalpha():
+                    self._handle_compound_statement(state, start_pos)
+                    continue
+
                 # Handle operators and delimiters
                 self._handle_operator_or_delimiter(state, start_pos)
+
+            # Handle any remaining dedents at end of file
+            while len(state.indentation_stack) > 1:
+                state.indentation_stack.pop()
+                self._add_token(state, TokenType.BLOCK_END, 'block_end', state.position, '')
+                self._add_token(state, TokenType.DEDENT, 0, state.position, "")
 
         except Exception as e:
             if not isinstance(e, LexerError):
@@ -308,6 +351,27 @@ class ComplexLexer:
         # Validate final state
         self._validate_final_state(state)
         return state.tokens
+    
+    def _handle_indentation(self, state: LexerState) -> None:
+        current_indent = 0
+        while state.current_char == ' ':
+            current_indent += 1
+            state.advance()
+            
+        if current_indent > state.indentation_stack[-1]:
+            state.indentation_stack.append(current_indent)
+            self._add_token(state, TokenType.INDENT, current_indent, state.position, " " * current_indent)
+            self._add_token(state, TokenType.BLOCK_START, 'block_start', state.position, '')
+        elif current_indent < state.indentation_stack[-1]:
+            while current_indent < state.indentation_stack[-1]:
+                state.indentation_stack.pop()
+                self._add_token(state, TokenType.BLOCK_END, 'block_end', state.position, '')
+                self._add_token(state, TokenType.DEDENT, current_indent, state.position, "")
+                if current_indent > state.indentation_stack[-1]:
+                    raise LexerError("Invalid dedent level", 
+                                   state.position.line, 
+                                   state.position.column,
+                                   state.get_context())
 
     def _handle_comment(self, state: LexerState) -> None:
         while state.current_char and state.current_char != '\n':
@@ -556,46 +620,73 @@ class ComplexLexer:
             self._handle_operator(state, start_pos)
 
     def _handle_expression(self, state: LexerState, start_pos: Position) -> None:
-        """Handle complex expressions with nested parentheses"""
+        """Handle complex expressions with nested parentheses, operators, and control flow"""
         nesting_level = 0
         expression = ''
         
         while state.current_char:
+            # Handle line continuation
+            if state.current_char == '\\' and state.peek() == '\n':
+                state.advance()  # Skip backslash
+                state.advance()  # Skip newline
+                while state.current_char and state.current_char.isspace():
+                    state.advance()
+                continue
+                
+            # Track nesting level for parentheses
             if state.current_char == '(':
                 nesting_level += 1
+                expression += state.current_char
             elif state.current_char == ')':
                 nesting_level -= 1
                 if nesting_level < 0:
                     break
-            
-            expression += state.current_char
+                expression += state.current_char
+            # Handle statement terminators
+            elif nesting_level == 0 and state.current_char in (':', ';', '\n'):
+                break
+            else:
+                expression += state.current_char
+                
             state.advance()
             
-            if nesting_level == 0:
+            # Break if we've completed a top-level expression
+            if nesting_level == 0 and state.current_char and (
+                state.current_char in (':', ';', '\n') or 
+                (state.current_char.isspace() and state.peek() in (':', ';', '\n'))
+            ):
                 break
-                
-        # Now tokenize the expression contents
+                    
+        # Tokenize the expression contents if we have any
         if expression:
             self._tokenize_expression_contents(state, expression, start_pos)
 
     def _tokenize_expression_contents(self, state: LexerState, expression: str, start_pos: Position) -> None:
-        """Tokenize the contents of a complex expression."""
-        current_token = ''
+        """Tokenize the contents of a complex expression with improved operator handling"""
         i = 0
         
         while i < len(expression):
             char = expression[i]
             
-            # Handle numbers
-            if char.isdigit() or char == '.':
+            # Handle numbers (including scientific notation)
+            if char.isdigit() or (char == '.' and i + 1 < len(expression) and expression[i + 1].isdigit()):
                 num_str = ''
-                while i < len(expression) and (expression[i].isdigit() or expression[i] == '.'):
-                    num_str += expression[i]
+                while i < len(expression) and (expression[i].isdigit() or expression[i] in '.eE+-'):
+                    if expression[i] in 'eE':
+                        # Handle scientific notation
+                        num_str += expression[i]
+                        i += 1
+                        if i < len(expression) and expression[i] in '+-':
+                            num_str += expression[i]
+                        else:
+                            i -= 1
+                    else:
+                        num_str += expression[i]
                     i += 1
                 i -= 1  # Back up one to account for the outer loop increment
                 
                 try:
-                    if '.' in num_str:
+                    if '.' in num_str or 'e' in num_str.lower():
                         value = float(num_str)
                         self._add_token(state, TokenType.FLOAT, value, start_pos, num_str)
                     else:
@@ -607,7 +698,7 @@ class ComplexLexer:
                                 start_pos.column,
                                 state.get_context())
             
-            # Handle identifiers
+            # Handle identifiers and keywords
             elif char.isalpha() or char == '_':
                 identifier = ''
                 while i < len(expression) and (expression[i].isalnum() or expression[i] == '_'):
@@ -622,17 +713,21 @@ class ComplexLexer:
                 else:
                     self._add_token(state, TokenType.IDENTIFIER, identifier, start_pos, identifier)
             
-            # Handle operators
-            elif char in '+-*/%':
-                if i + 1 < len(expression) and expression[i:i+2] in self.operators:
-                    operator = expression[i:i+2]
-                    self._add_token(state, self.operators[operator], operator, start_pos, operator)
-                    i += 1
+            # Handle operators with precedence
+            elif char in '+-*/%<>!=':
+                # Try to match two-character operators first
+                if i + 1 < len(expression):
+                    two_char = char + expression[i + 1]
+                    if two_char in self.operators:
+                        self._add_token(state, self.operators[two_char], two_char, start_pos, two_char)
+                        i += 1
+                    elif char in self.operators:
+                        self._add_token(state, self.operators[char], char, start_pos, char)
                 else:
-                    operator = char
-                    self._add_token(state, self.operators[operator], operator, start_pos, operator)
+                    if char in self.operators:
+                        self._add_token(state, self.operators[char], char, start_pos, char)
             
-            # Handle parentheses
+            # Handle parentheses for both grouping and tuples
             elif char == '(':
                 self._add_token(state, TokenType.TUPLE_START, '(', start_pos, '(')
                 state.nesting_levels['('] += 1
@@ -640,15 +735,11 @@ class ComplexLexer:
                 self._add_token(state, TokenType.TUPLE_END, ')', start_pos, ')')
                 state.nesting_levels['('] -= 1
             
-            # Handle comparison operators
-            elif char in '<>!=':
-                if i + 1 < len(expression) and expression[i:i+2] in self.operators:
-                    operator = expression[i:i+2]
-                    self._add_token(state, self.operators[operator], operator, start_pos, operator)
-                    i += 1
-                else:
-                    operator = char
-                    self._add_token(state, self.operators[operator], operator, start_pos, operator)
+            # Handle string literals
+            elif char in '"\'':
+                self._handle_string_in_expression(state, start_pos, expression[i:])
+                i = state.position.index  # Update position after handling string
+                continue
             
             # Skip whitespace
             elif char.isspace():
@@ -661,6 +752,29 @@ class ComplexLexer:
                             state.get_context())
             
             i += 1
+
+    def _handle_string_in_expression(self, state: LexerState, start_pos: Position, remaining: str) -> None:
+        """Handle string literals within expressions"""
+        quote = remaining[0]
+        string = quote
+        i = 1
+        
+        while i < len(remaining) and (remaining[i] != quote or remaining[i-1] == '\\'):
+            string += remaining[i]
+            i += 1
+            
+        if i < len(remaining) and remaining[i] == quote:
+            string += quote
+            value = string[1:-1].encode('utf-8').decode('unicode_escape')
+            self._add_token(state, TokenType.STRING, value, start_pos, string)
+            # Update state position
+            for _ in range(len(string)):
+                state.advance()
+        else:
+            raise LexerError("Unterminated string in expression",
+                            start_pos.line,
+                            start_pos.column,
+                            state.get_context())
 
     def _handle_opening_delimiter(self, state: LexerState, start_pos: Position) -> None:
         delimiter = state.current_char
