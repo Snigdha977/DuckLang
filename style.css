@@ -1,0 +1,159 @@
+/* General Reset */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* Body and Font Settings */
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f8f9fa;
+    color: #333;
+    line-height: 1.6;
+}
+
+/* Header Section */
+header {
+    text-align: center;
+    padding: 40px;
+    background-color: #ffcc00;
+    color: white;
+}
+
+header h1 {
+    font-size: 2.5em;
+    margin-bottom: 10px;
+}
+
+/* Overview Section */
+#overview {
+    padding: 30px;
+    background-color: #fff;
+    margin: 20px auto;
+    max-width: 900px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+#overview h2 {
+    font-size: 2em;
+    color: #ffcc00;
+}
+
+#overview p {
+    font-size: 1.2em;
+    margin-bottom: 20px;
+}
+
+/* Installation Section */
+#installation {
+    padding: 30px;
+    background-color: #f9f9f9;
+    margin: 20px auto;
+    max-width: 900px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+#installation h2 {
+    font-size: 2em;
+    color: #ffcc00;
+}
+
+#installation ul {
+    list-style-type: none;
+    margin-top: 10px;
+}
+
+#installation li {
+    font-size: 1.1em;
+    margin: 10px 0;
+}
+
+pre code {
+    font-size: 1.1em;
+    background-color: #f1f1f1;
+    padding: 10px;
+    border-radius: 6px;
+    display: block;
+    white-space: pre-wrap;
+}
+
+/* Getting Started Section */
+#getting-started {
+    padding: 30px;
+    background-color: #fff;
+    margin: 20px auto;
+    max-width: 900px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+#getting-started h2 {
+    font-size: 2em;
+    color: #ffcc00;
+}
+
+#getting-started p {
+    font-size: 1.2em;
+    margin-bottom: 20px;
+}
+
+#getting-started a {
+    display: inline-block;
+    padding: 10px 20px;
+    background-color: #ffcc00;
+    color: white;
+    text-decoration: none;
+    border-radius: 6px;
+    font-size: 1.2em;
+    margin-top: 20px;
+}
+
+/* Contribution Section */
+#contribution {
+    padding: 30px;
+    background-color: #f9f9f9;
+    margin: 20px auto;
+    max-width: 900px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+#contribution h2 {
+    font-size: 2em;
+    color: #ffcc00;
+}
+
+#contribution p {
+    font-size: 1.2em;
+}
+
+/* Contact Section */
+#contact {
+    padding: 30px;
+    background-color: #fff;
+    margin: 20px auto;
+    max-width: 900px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+#contact h2 {
+    font-size: 2em;
+    color: #ffcc00;
+}
+
+#contact p {
+    font-size: 1.2em;
+}
+
+/* Footer */
+footer {
+    text-align: center;
+    padding: 20px;
+    background-color: #ffcc00;
+    color: white;
+    margin-top: 40px;
+}
