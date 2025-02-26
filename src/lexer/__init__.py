@@ -1,148 +1,49 @@
-# Importing regular expression module
-import re
-# Importing syntax definitions
-from lib.syntax import syntax
-# Importing token types dictionary
-from src.lexer.token_types import TOKEN_TYPES
+from .state import LexerState
+from .handler.whitespace_hadler import WhiteSpaceHandler
+from .handler.comment_handler import CommentHandler
+from .handler.number_handler import NumberHandler
+from .handler.string_handler import StringHandler
+from .handler.operator_handler import OperatorHandler
+from .handler.identifier_handler import IdentifierHandler
+from .handler.miscellanious_handler import MiscellaneousHandler
+from .token_types import TokenType
 
+class Lexer:
+    """Main Lexer class to tokenize source code."""
 
-# Retrieve the print command syntax from the syntax dictionary
-print_command = syntax.get("PRINT_COMMAND", "No Name Defined")
-# Retrieve the variable declaration command syntax from the syntax dictionary
-var_declare_command = syntax.get("VARIABLE_DECLARE", "No Name Defined")
-
-def identify_literal_type(value_str):
-    """Identify the type of a literal value."""
-    value_str = value_str.strip()
-
-    # Check for None/null literals
-    if value_str.lower() in ('none', 'null'):
-        return TOKEN_TYPES["NONE_LITERAL"], None
+    def __init__(self):
+        """Initialize all token handlers."""
         
-    # Check for boolean literals (true/false)
-    if value_str.lower() in ('true', 'false'):
-        return TOKEN_TYPES["BOOLEAN_LITERAL"], value_str.lower() == 'true'
-        
-    # Check for float literals (including scientific notation)
-    try:
-        if '.' in value_str or 'e' in value_str.lower():
-            float_val = float(value_str)
-            return TOKEN_TYPES["FLOAT_LITERAL"], float_val
-    except ValueError:
-        pass
-        
-    # Check for integer literals (supports different bases: hex, binary, octal)
-    try:
-        if value_str.startswith('0x'):
-            int_val = int(value_str[2:], 16)
-        elif value_str.startswith('0b'):
-            int_val = int(value_str[2:], 2)
-        elif value_str.startswith('0o'):
-            int_val = int(value_str[2:], 8)
-        else:
-            int_val = int(value_str)
-        return TOKEN_TYPES["INTEGER_LITERAL"], int_val
-    except ValueError:
-        pass
-    
-    # If it’s a string literal, it should be enclosed in quotes
-    if (value_str.startswith('"') and value_str.endswith('"')) or \
-       (value_str.startswith("'") and value_str.endswith("'")):
-        return TOKEN_TYPES["STRING_LITERAL"], value_str[1:-1]
-        
-    # Return as unknown if no match is found
-    return TOKEN_TYPES["UNKNOWN"], value_str
 
-def lexer(source_code):
-    """Function for lexical analysis to tokenize the source code."""
-    tokens = []
-    position = 0  # Initialize the position pointer to track character position
+        self.handlers = [
+            WhiteSpaceHandler(),
+            CommentHandler(),
+            NumberHandler(),
+            StringHandler(),
+            OperatorHandler(),
+            IdentifierHandler(),
+            MiscellaneousHandler(),
+        ]
 
-    while position < len(source_code):
-        # Skip whitespace
-        match = re.match(r'\s+', source_code[position:])
-        if match:
-            position += len(match.group(0))  # Move the position forward
-            continue
+    def tokenize(self, source):
+        """Tokenizes the input source code and returns a list of tokens."""
+        state = LexerState(source)
 
-        # Match print statements (e.g., print("Hello World"))
-        match = re.match(rf'\b{re.escape(print_command)}\(([^)]+)\)', source_code[position:])
-        if match:
-            # Create a print token with its position and content
-            print_token = {
-                'type': TOKEN_TYPES["PRINT_COMMAND"],
-                'value': match.group(0),
-                'position': position,
-                'raw': match.group(0)
-            }
-            tokens.append(print_token)
-            
-            # Analyze the content inside print statement (literal or expression)
-            content = match.group(1).strip()
-            literal_type, literal_value = identify_literal_type(content)
-            
-            # Create a value token (literal) with the identified type
-            value_token = {
-                'type': literal_type,
-                'value': literal_value,
-                'position': position + len(print_command) + 1,  # Position after print command
-                'raw': content
-            }
-            tokens.append(value_token)
-            
-            position += len(match.group(0))  # Move position to the end of the matched print statement
-            continue
+        while state.has_more_chars():
+            # print(f"Processing: '{state.current_char}' at {state.position.index}")  # Debug info
+            start_pos = state.position.copy()
 
-        # Match variable declarations (e.g., let x = 5)
-        match = re.match(
-            rf'\b{re.escape(var_declare_command)}\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([^;\n]+)',
-            source_code[position:]
-        )
-        if match:
-            # Create a token for the variable declaration command (e.g., let)
-            var_decl_token = {
-                'type': TOKEN_TYPES["VARIABLE_DECLARE"],
-                'value': var_declare_command,
-                'position': position,
-                'raw': var_declare_command
-            }
-            tokens.append(var_decl_token)
+            handler_found = False
+            for handler in self.handlers:
+                if handler.can_handle(state):
+                    # print(f"Using handler: {handler.__class__.__name__}")  # Debug info
+                    handler.handle(state,start_pos)
+                    handler_found = True
+                    break
 
-            # Create a token for the variable name (identifier)
-            identifier_token = {
-                'type': TOKEN_TYPES["IDENTIFIER"],
-                'value': match.group(1),
-                'position': position + len(var_declare_command) + 1,  # Position after 'let'
-                'raw': match.group(1)
-            }
-            tokens.append(identifier_token)
+            if not handler_found:
+                print(f"Current char: '{state.current_char()}', Position: {state.position.index}, Line: {state.position.line}, Column: {state.position.column}") #debugger
 
-            # Create a token for the equals sign in the variable declaration
-            equals_token = {
-                'type': TOKEN_TYPES["EQUALS"],
-                'value': '=',
-                'position': position + len(var_declare_command) + len(match.group(1)) + 1,  # Position after variable name
-                'raw': '='
-            }
-            tokens.append(equals_token)
+                raise Exception(f"Unexpected character '{state.current_char()}' at {start_pos}")
 
-            # Identify the type of the value assigned to the variable
-            value_str = match.group(2).strip()
-            literal_type, literal_value = identify_literal_type(value_str)
-            
-            # Create a token for the assigned value with the identified type
-            value_token = {
-                'type': literal_type,
-                'value': literal_value,
-                'position': position + len(match.group(0)) - len(value_str),
-                'raw': value_str
-            }
-            tokens.append(value_token)
-            
-            position += len(match.group(0))  # Move position to the end of the matched variable declaration
-            continue
-
-        # If no match is found for any known patterns, move to the next character
-        position += 1
-
-    return tokens  # Return the list of tokenized results
+        return state.tokens
